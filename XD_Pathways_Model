@@ -1,0 +1,153 @@
+(*General Rayleigh-Weibull simulation, conform to the model:*)
+
+(*number of independent pathways in the simulation*)
+dims = 4;
+(*stress-indpendent aneuploidy deffect*)
+epsilon = 0.1;
+
+(*Defining First - Order functions *)
+
+(*L2 distance in 2D for two orthogonal vector (Hello Pythagores!)*)
+(*more convient form*)
+l2dist[xy_] := Norm[xy]
+(*test it*)l2dist[{3, 4}];
+(*helper function:linspace*)
+linspace[s_, f_, n_] := Range[s, f, (f - s)/(n - 1)]
+(*test it*)linspace[1, 2, 3];
+(*helper function:repeat*)
+repeat[x_, times_] := Table[x, {i, times}]
+(*test it*) repeat[1, 10];
+getRandomScaledVector[dimensions_, scale_] :=
+ RotationMatrix[{RandomVariate[
+      MultinormalDistribution[repeat[0, dimensions],
+       IdentityMatrix[dimensions]]],
+     RandomVariate[
+      MultinormalDistribution[repeat[0, dimensions],
+       IdentityMatrix[dimensions]]]}].UnitVector[dimensions, dimensions]*scale
+(*Generates a displacement characteristic of a specific stress*)
+getStress[stressLevel_] := getRandomScaledVector[dims, stressLevel]
+(*test it*)getStress[0.5] // MatrixForm;
+(*re-test it*) Mean[ Table[l2dist[getStress[0.5]], {100}]];
+(*project aneuploidies into a stress-specific decomposition*)
+(*Attention, here is where we select the Aneuploidy level!!!!!*)
+projectAneuploidyIntoStress[aneuploidyAverageEffect_] :=
+ getRandomScaledVector[dims,
+  RandomVariate[WeibullDistribution[dims, aneuploidyAverageEffect]]]
+(*test it*)projectAneuploidyIntoStress[0.3] // MatrixForm;
+(*define log ratio of 1-defficiency*)
+logRatio[x_, y_] := Log[(1 - y - epsilon)/(1 - x)]
+(*test it*)logRatio[0.5, 0.3];
+(*more convient form*)
+lR[xy_] := Apply[logRatio, xy]
+(*test it*)lR[{0.3, 0.5}];
+(*define a function that pulls means and SDs*)
+meansAndSD[line_] := {Mean[line], StandardDeviation[line]}
+(*test it*)meansAndSD[RandomVariate[NormalDistribution[0, 0.5], 20]];
+(*delete all the void lists from the list*)
+clearList[list_] := Replace[list, x_List :> DeleteCases[x, {}], {0, Infinity}]
+(*test it*)clearList[{{0}, {}}];
+(*marks the lines for more simple plotting*)
+markForPlot[list_] :=
+ Table[Map[Function[u, {i, u}], list[[i]]], {i, Length[list]}]
+(*test it*)markForPlot[{{-1, 1}, {-2, 2}, {-3, 3}, {-4, 4}, {-5, 5}}];
+(*Add plotting to visualize what is going on*)
+draw[bivector_] :=
+ ListPlot[{{0, 0}, bivector[[1]], bivector[[2]],
+   bivector[[1]] + bivector[[2]]}, PlotStyle -> PointSize[Large],
+  Epilog -> {{Red, Arrow[{{0, 0}, bivector[[1]]}]}, {Blue,
+     Arrow[{{0, 0}, bivector[[2]]}]}, {Green,
+     Arrow[{{0, 0}, bivector[[1]] + bivector[[2]]}]}}]
+(*test it*)draw[{{0.0, 0.5}, {0.3, 0.3}}];
+
+
+(*Defining Second - Order functions *)
+
+(*for a single stress,projects the aneuploidy into the stress-specific PCA.If \
+there are adaptation,dispersion or random jitter to be inserted,it is here*)
+getStressAneuploidyCouple[stressLevel_, aneuploidyLevel_, aneuploidyNumber_] :=
+
+ Transpose[
+  {Map[getStress, repeat[stressLevel, aneuploidyNumber]],
+   Map[projectAneuploidyIntoStress,
+    repeat[aneuploidyLevel, aneuploidyNumber]]}]
+(*test it*)rf = getStressAneuploidyCouple[0.01, 0.3, 5];
+(*test it*)rf // MatrixForm;
+(*more convinient form*)
+getSAC[base_] := Apply[getStressAneuploidyCouple, base]
+(*Function that filters out the cases where either euploid or aneuploid are \
+dead*)
+deadFilterOut[v1_, v2_] :=
+ l2dist[v1] < 1 && l2dist[v2] < 1 && l2dist[v1 + v2] < 1
+(*test it*)deadFilterOut[{1, 1}, {0.5, 0.5}];
+(*more convinient form*)
+dFO[base_] := Apply[deadFilterOut, base]
+(*test it*)dFO[{{1, 1}, {0.5, 0.5}}];
+(*test it*)Select[{{{1, 1}, {0.5, 0.5}}, {{-0.5, 0.5}, {0.3, -0.3}}}, dFO];
+(*filters out*)
+L2DistWithSum[v1_, v2_] := {l2dist[v1], l2dist[v1 + v2]}
+(*test it*)L2DistWithSum[{0.5, 0.5}, {0, -0.5}];
+(*more convinient form*)
+L2DWS[base_] := Apply[L2DistWithSum, base]
+(*test it*)L2DWS[{{0.5, 0.5}, {0, -0.5}}];
+(*table-like mean and standard deviation*)
+groupMSD[table_] := Map[meansAndSD, table]
+(*test it*)groupMSD[{RandomVariate[NormalDistribution[0, 0.5], 10]}];
+
+
+
+
+(*Defining Third - Order functions*)
+
+(*recovers the shift induced by stresses and aneuploidies that will be used \
+further on in the simulation.Its results are further reffrered as multimatrix*)
+getStressesAndAneuploidies[lowSterss_, highStress_, stressSamples_,
+  aneupStress_, aneupSamples_] :=
+ Map[getSAC,
+  Tuples[{Apply[
+     linspace, {lowSterss, highStress,
+      stressSamples}], {aneupStress}, {aneupSamples}}]]
+(*test it*)getStressesAndAneuploidies[0.01, 1, 10, 0.3, 15];
+(*filters out dead aneuploids from the multimatrix*)
+filterOutDead[multimatrix_] := Map[Function[u, Select[u, dFO]], multimatrix]
+(*test it*)filterOutDead[{{{{1, 1}, {0.5, 0.5}}, {{-0.5, 0.5}, {0.3, -0.3}}}}];
+(*apply L2 to a set of elements in the form of \
+matrix:{{{{x_s,y_s},{x_a,y_a}},...},...}*)
+applyL2DWS[multimatrix_] := Map[L2DWS, multimatrix, {2}]
+(*test it*)applyL2DWS[{{{{1, 1}, {0.5, 0.5}}, {{-0.5, 0.5}, {0.3, -0.3}}}}];
+(*apply the log-ratio of aneuploid over euploid*)
+(*applies LR to the whole multimatrix*)
+applyLR[multimatrix_] := Map[lR, multimatrix, {2}]
+(*test it*)applyLR[{{{0.707107, 0.5}}}];
+
+
+(*testing the chaining*)
+r1 = getStressesAndAneuploidies[0.01, 0.2, 2, 0.3, 15];
+r2  = filterOutDead[r1];
+r3 = applyL2DWS[r2];
+r4 = clearList[r3];
+r5 = applyLR[r4];
+
+
+(*Defining Fourth - Order functions and higher*)
+
+(*Stacks all the relevant functions*)executeStack :=
+ Composition[clearList, applyLR, applyL2DWS, filterOutDead,
+  getStressesAndAneuploidies]
+(*try it out*) result = executeStack[0, 0.70, 20, 0.15, 30];
+result // MatrixForm
+SmoothHistogram[result[[19]], Automatic, "PDF",
+  AxesLabel -> {"Log-Growth Advantage for an aneuploidy",
+    "density of aneuploids estimation"}];
+(*get means and SD*) res = groupMSD[result] ;
+res // MatrixForm;
+(*extract means*) means = Transpose[res][[1]];
+(*linear regression*) model = LinearModelFit[res, x, x]
+pl1 = ListPlot[markForPlot[result], PlotStyle -> Blue, AspectRatio -> 1];
+pl2 = ListLinePlot[means , PlotStyle -> Red, AspectRatio -> 1];
+Show[pl1, pl2, PlotRange -> All, ImageSize -> Large,
+ AxesLabel -> {"Stress Intesity", Log[(1 - d)/(1 - d0)]}]
+pl3 = ListPlot[res];
+pl4 = Plot[model[x], {x, Min[res], Max[res]}];
+Show[pl3, pl4, ImageSize -> Large,
+ AxesLabel -> {"Mean of log-fitness relative to euploid",
+   "SD of log-fitness relative to the euploid"}]
