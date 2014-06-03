@@ -6,7 +6,6 @@ dims = 4;
 epsilon = 0.1;
 
 (*Defining First - Order functions *)
-
 (*L2 distance in 2D for two orthogonal vector (Hello Pythagores!)*)
 (*more convient form*)
 l2dist[xy_] := Norm[xy]
